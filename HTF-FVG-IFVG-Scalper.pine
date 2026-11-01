@@ -28,7 +28,9 @@ onD      = input.bool(true,  "Daily", inline = "tD",  group = G_HTF)
 colD     = input.color(#ec4899, "",   inline = "tD",  group = G_HTF)
 htfTransp = input.int(85, "Fill transparency", minval = 0, maxval = 100, group = G_HTF)
 htfMax    = input.int(3, "Max FVGs per timeframe", minval = 1, maxval = 20, group = G_HTF)
-htfMitig  = input.string("Close through", "Remove FVG when", options = ["Close through", "Wick through", "Never"], group = G_HTF)
+htfMitig  = input.string("Close through", "FVG is mitigated when", options = ["Close through", "Wick through", "Never"], group = G_HTF)
+htfKeepMit = input.bool(true, "Keep mitigated FVGs (faded)", group = G_HTF, tooltip = "Mitigated FVGs stop extending and fade out instead of disappearing, so a tapped FVG stays visible.")
+htfMitMax  = input.int(10, "Max mitigated FVGs kept", minval = 1, maxval = 100, group = G_HTF)
 
 G_ENT = "IFVG Entry (low timeframe)"
 showIfvg    = input.bool(true, "Show V-Shape IFVG entries", group = G_ENT)
@@ -129,6 +131,8 @@ type HFvg
     string txt
     bool   tapped = false
 
+var array<box> mitBoxes = array.new<box>()
+
 // Non-repainting: last *closed* HTF candles. Middle candle time = time[2].
 htfData(string tf) =>
     request.security(syminfo.tickerid, tf, [high[1], low[1], high[3], low[3], time[2]], lookahead = barmerge.lookahead_on)
@@ -154,7 +158,17 @@ htfStep(array<HFvg> arr, string tf, bool isOn, color col, float h1, float l1, fl
                 HFvg f = arr.get(i)
                 bool mitigated = htfMitig == "Close through" ? (f.bull ? close < f.bot : close > f.top) : htfMitig == "Wick through" ? (f.bull ? low < f.bot : high > f.top) : false
                 if mitigated
-                    box.delete(f.bx)
+                    if htfKeepMit
+                        box.set_right(f.bx, time)
+                        box.set_bgcolor(f.bx, color.new(col, math.min(100, htfTransp + 8)))
+                        box.set_border_color(f.bx, color.new(col, 70))
+                        box.set_border_style(f.bx, line.style_dotted)
+                        box.set_border_width(f.bx, 1)
+                        box.set_text(f.bx, f.txt + (f.tapped ? " • TAPPED" : "") + " • MITIGATED")
+                        box.set_text_color(f.bx, color.new(col, 40))
+                        mitBoxes.push(f.bx)
+                    else
+                        box.delete(f.bx)
                     arr.remove(i)
                 else
                     bool inZone = f.bull ? low <= f.top : high >= f.bot
@@ -194,6 +208,7 @@ var array<HFvg> fD   = array.new<HFvg>()
 [b120, s120] = htfStep(f120, "120", on120, col120, a120h1, a120l1, a120h3, a120l3, a120t)
 [b240, s240] = htfStep(f240, "240", on240, col240, a240h1, a240l1, a240h3, a240l3, a240t)
 [bD, sD]     = htfStep(fD,   "D",   onD,   colD,   aDh1,   aDl1,   aDh3,   aDl3,   aDt)
+capBoxes(mitBoxes, htfMitMax)
 
 string bullTapTfs = (b5 ? "5M " : "") + (b15 ? "15M " : "") + (b30 ? "30M " : "") + (b60 ? "1H " : "") + (b120 ? "2H " : "") + (b240 ? "4H " : "") + (bD ? "D " : "")
 string bearTapTfs = (s5 ? "5M " : "") + (s15 ? "15M " : "") + (s30 ? "30M " : "") + (s60 ? "1H " : "") + (s120 ? "2H " : "") + (s240 ? "4H " : "") + (sD ? "D " : "")
