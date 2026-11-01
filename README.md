@@ -48,3 +48,18 @@ A second, separate indicator built for **NQ1! / MNQ1! scalping**.
 | **Alerts** | Long/short setup (the message includes entry, SL and TP/DOL), any IFVG, HTF FVG tapped, SMT, session high/low swept, PDH/PDL swept, LRL broken. |
 
 **Chart:** use a **1-minute** chart so every entry timeframe works. If the entry TF is set lower than the chart TF, the chart TF is used and the panel shows a ⚠ warning.
+
+---
+
+# HTF FVG Bias Map (`HTF-FVG-Bias-Map.pine`)
+
+A clean HTF map with a bias panel. Works best on a 1m–3m chart.
+
+| Feature | Details |
+|---|---|
+| **HTF FVGs** | 5m, 15m, 30m, 1H, 2H, 4H, each with its own toggle and colour. **Only unmitigated FVGs are shown.** An FVG is removed when a candle of its own timeframe closes through it. |
+| **ITH / ITL inside FVGs** | Intermediate-term highs/lows (a short-term swing with lower highs / higher lows on both sides) are labelled when they form **inside** an active HTF FVG, e.g. `ITL 1H FVG ▲`. You can optionally mark the ones outside FVGs in grey. |
+| **Recent DOL** | The nearest untaken liquidity above and below price (swing highs/lows, PDH/PDL, Asia/London highs/lows). The one in the bias direction is marked **★**. |
+| **Sessions / PDH / PDL** | The Asia and London ranges are shaded, and their highs/lows plus PDH/PDL are extended until swept. |
+| **Bias panel** | Uses 15m, 30m, 1H and 2H FVGs. Each TF shows its latest event: **Bull FVG respected** (tapped, then an HTF candle closes above it) or **Bear FVG disrespected** (an HTF candle closes above it) count as bullish (+1). **Bear FVG respected** or **Bull FVG disrespected** count as bearish (−1). Overall bias = sum of the TFs → BULLISH / BEARISH / NEUTRAL, plus the ★ DOL target. |
+| **Alerts** | Bias turned bullish/bearish, ITH/ITL inside an HTF FVG, session high/low swept, PDH/PDL swept. |

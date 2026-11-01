@@ -1,0 +1,511 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// HTF FVG Bias Map
+// Unmitigated HTF FVGs (5m • 15m • 30m • 1H • 2H • 4H) • ITH / ITL inside HTF FVGs • Recent DOL
+// Asia / London highs & lows • PDH / PDL • Bias from 15m / 30m / 1H / 2H FVGs respected or disrespected
+// Visualization tool — not financial advice.
+
+//@version=6
+indicator("HTF FVG Bias Map", shorttitle = "FVG Bias Map", overlay = true, max_lines_count = 500, max_boxes_count = 500, max_labels_count = 500, max_bars_back = 500)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ═══════════════════════════════════════════════════════════════════════════════
+G_HTF = "HTF FVGs (unmitigated only)"
+on5    = input.bool(true, "5M",  inline = "t5",   group = G_HTF)
+col5   = input.color(#38bdf8, "", inline = "t5",  group = G_HTF)
+on15   = input.bool(true, "15M", inline = "t15",  group = G_HTF)
+col15  = input.color(#22c55e, "", inline = "t15", group = G_HTF)
+on30   = input.bool(true, "30M", inline = "t30",  group = G_HTF)
+col30  = input.color(#eab308, "", inline = "t30", group = G_HTF)
+on60   = input.bool(true, "1H",  inline = "t60",  group = G_HTF)
+col60  = input.color(#f97316, "", inline = "t60", group = G_HTF)
+on120  = input.bool(true, "2H",  inline = "t120", group = G_HTF)
+col120 = input.color(#ef4444, "", inline = "t120", group = G_HTF)
+on240  = input.bool(true, "4H",  inline = "t240", group = G_HTF)
+col240 = input.color(#a855f7, "", inline = "t240", group = G_HTF)
+htfTransp = input.int(85, "Fill transparency", minval = 0, maxval = 100, group = G_HTF)
+htfMax    = input.int(4, "Max FVGs per timeframe", minval = 1, maxval = 20, group = G_HTF)
+
+G_BIAS = "Bias (FVG respected / disrespected)"
+showBias = input.bool(true, "Show bias panel", group = G_BIAS)
+bias15   = input.bool(true, "Use 15M", inline = "b1", group = G_BIAS)
+bias30   = input.bool(true, "Use 30M", inline = "b1", group = G_BIAS)
+bias60   = input.bool(true, "Use 1H",  inline = "b2", group = G_BIAS)
+bias120  = input.bool(true, "Use 2H",  inline = "b2", group = G_BIAS)
+panelPos = input.string("Top right", "Panel position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = G_BIAS)
+
+G_IT = "ITH / ITL inside HTF FVGs"
+showIt    = input.bool(true, "Mark ITH / ITL inside HTF FVGs", group = G_IT, tooltip = "ITH = a short-term high with lower short-term highs on both sides. ITL = a short-term low with higher short-term lows on both sides.")
+showAllIt = input.bool(false, "Also mark ITH / ITL outside FVGs (grey)", group = G_IT)
+stLen     = input.int(2, "Short-term swing length", minval = 1, maxval = 10, group = G_IT)
+itKeep    = input.int(20, "Keep last N", minval = 1, maxval = 100, group = G_IT)
+
+G_DOL = "DOL (draw on liquidity)"
+showDol   = input.bool(true, "Show recent DOL above / below", group = G_DOL, tooltip = "Nearest untaken liquidity: external swing highs/lows, PDH/PDL, Asia/London highs/lows. The DOL in the bias direction is marked ★.")
+swLen     = input.int(10, "Swing length", minval = 2, group = G_DOL)
+dolColor  = input.color(#2f80ed, "Colour", group = G_DOL)
+dolExtend = input.int(15, "Extend right (bars)", minval = 1, maxval = 300, group = G_DOL)
+
+G_SES = "Sessions & Previous Day"
+sesTz     = input.string("America/New_York", "Session timezone", group = G_SES)
+showAsia  = input.bool(true, "", inline = "as", group = G_SES)
+asiaSess  = input.session("2000-0000", "Asia", inline = "as", group = G_SES)
+asiaCol   = input.color(#a78bfa, "", inline = "as", group = G_SES)
+showLon   = input.bool(true, "", inline = "lo", group = G_SES)
+lonSess   = input.session("0200-0500", "London", inline = "lo", group = G_SES)
+lonCol    = input.color(#f472b6, "", inline = "lo", group = G_SES)
+sesBox    = input.bool(true, "Shade session range", group = G_SES)
+sesDays   = input.int(2, "Sessions to keep", minval = 1, maxval = 10, group = G_SES)
+showPd    = input.bool(true, "", inline = "pd", group = G_SES)
+pdCol     = input.color(#94a3b8, "PDH / PDL", inline = "pd", group = G_SES)
+pdDays    = input.int(1, "Days of PDH/PDL to keep", minval = 1, maxval = 10, group = G_SES)
+hideSwept = input.bool(false, "Delete levels once swept (otherwise faded)", group = G_SES)
+
+G_UI = "Display"
+lblSizeIn = input.string("Small", "Label size", options = ["Tiny", "Small", "Normal"], group = G_UI)
+lblSize   = lblSizeIn == "Tiny" ? size.tiny : lblSizeIn == "Small" ? size.small : size.normal
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+int chartSec = timeframe.in_seconds(timeframe.period)
+
+tfLabel(string tf) =>
+    int s = timeframe.in_seconds(tf)
+    s < 3600 ? str.tostring(math.round(s / 60)) + "M" : s < 86400 ? str.tostring(math.round(s / 3600)) + "H" : "D"
+
+capBoxes(array<box> a, int n) =>
+    while a.size() > n
+        box.delete(a.shift())
+    true
+
+capLabels(array<label> a, int n) =>
+    while a.size() > n
+        label.delete(a.shift())
+    true
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HTF FVGs + RESPECT / DISRESPECT
+// ═══════════════════════════════════════════════════════════════════════════════
+type HFvg
+    box    bx
+    float  top
+    float  bot
+    bool   bull
+    int    left
+    string tfl
+    bool   tapped = false
+
+type TfState
+    int    dir = 0
+    string txt = "—"
+
+// Last *closed* HTF candles (no repaint). close[1] = close of the HTF candle that just finished.
+htfData(string tf) =>
+    request.security(syminfo.tickerid, tf, [high[1], low[1], high[3], low[3], time[2], close[1]], lookahead = barmerge.lookahead_on)
+
+htfStep(array<HFvg> arr, TfState st, string tf, bool showIt_, bool track, color col, float h1, float l1, float h3, float l3, int t, float c1) =>
+    bool   chg = timeframe.change(tf)
+    bool   ok  = timeframe.in_seconds(tf) > chartSec and (showIt_ or track)
+    int    ext = chartSec * 1000 * 8
+    string tl  = tfLabel(tf)
+    if ok
+        if chg and not na(t)
+            // 1) Judge the HTF candle that just closed against existing FVGs
+            if arr.size() > 0
+                for i = arr.size() - 1 to 0
+                    HFvg f = arr.get(i)
+                    if f.bull
+                        if c1 < f.bot
+                            st.dir := -1
+                            st.txt := "▼ Bull FVG disrespected"
+                            box.delete(f.bx)
+                            arr.remove(i)
+                        else if f.tapped and c1 > f.top
+                            st.dir   := 1
+                            st.txt   := "▲ Bull FVG respected"
+                            f.tapped := false
+                    else
+                        if c1 > f.top
+                            st.dir := 1
+                            st.txt := "▲ Bear FVG disrespected"
+                            box.delete(f.bx)
+                            arr.remove(i)
+                        else if f.tapped and c1 < f.bot
+                            st.dir   := -1
+                            st.txt   := "▼ Bear FVG respected"
+                            f.tapped := false
+            // 2) New FVG formed by the 3 most recent closed HTF candles
+            if l1 > h3
+                box b = na
+                if showIt_
+                    b := box.new(t, l1, time + ext, h3, xloc = xloc.bar_time, border_color = color.new(col, 50), bgcolor = color.new(col, htfTransp), text = tl + " FVG ▲", text_size = lblSize, text_color = col, text_halign = text.align_center, text_valign = text.align_center)
+                arr.push(HFvg.new(b, l1, h3, true, t, tl))
+            if h1 < l3
+                box b = na
+                if showIt_
+                    b := box.new(t, l3, time + ext, h1, xloc = xloc.bar_time, border_color = color.new(col, 50), bgcolor = color.new(col, htfTransp), text = tl + " FVG ▼", text_size = lblSize, text_color = col, text_halign = text.align_center, text_valign = text.align_center)
+                arr.push(HFvg.new(b, l3, h1, false, t, tl))
+            while arr.size() > htfMax
+                box.delete(arr.shift().bx)
+        // 3) Taps + extend
+        for f in arr
+            if (f.bull and low <= f.top) or (not f.bull and high >= f.bot)
+                f.tapped := true
+            if not na(f.bx)
+                box.set_right(f.bx, time + ext)
+    true
+
+[a5h1, a5l1, a5h3, a5l3, a5t, a5c]             = htfData("5")
+[a15h1, a15l1, a15h3, a15l3, a15t, a15c]       = htfData("15")
+[a30h1, a30l1, a30h3, a30l3, a30t, a30c]       = htfData("30")
+[a60h1, a60l1, a60h3, a60l3, a60t, a60c]       = htfData("60")
+[a120h1, a120l1, a120h3, a120l3, a120t, a120c] = htfData("120")
+[a240h1, a240l1, a240h3, a240l3, a240t, a240c] = htfData("240")
+
+var array<HFvg> f5   = array.new<HFvg>()
+var array<HFvg> f15  = array.new<HFvg>()
+var array<HFvg> f30  = array.new<HFvg>()
+var array<HFvg> f60  = array.new<HFvg>()
+var array<HFvg> f120 = array.new<HFvg>()
+var array<HFvg> f240 = array.new<HFvg>()
+var TfState s5   = TfState.new()
+var TfState s15  = TfState.new()
+var TfState s30  = TfState.new()
+var TfState s60  = TfState.new()
+var TfState s120 = TfState.new()
+var TfState s240 = TfState.new()
+
+htfStep(f5,   s5,   "5",   on5,   false,   col5,   a5h1,   a5l1,   a5h3,   a5l3,   a5t,   a5c)
+htfStep(f15,  s15,  "15",  on15,  bias15,  col15,  a15h1,  a15l1,  a15h3,  a15l3,  a15t,  a15c)
+htfStep(f30,  s30,  "30",  on30,  bias30,  col30,  a30h1,  a30l1,  a30h3,  a30l3,  a30t,  a30c)
+htfStep(f60,  s60,  "60",  on60,  bias60,  col60,  a60h1,  a60l1,  a60h3,  a60l3,  a60t,  a60c)
+htfStep(f120, s120, "120", on120, bias120, col120, a120h1, a120l1, a120h3, a120l3, a120t, a120c)
+htfStep(f240, s240, "240", on240, false,   col240, a240h1, a240l1, a240h3, a240l3, a240t, a240c)
+
+// Overall bias
+int biasScore = (bias15 ? s15.dir : 0) + (bias30 ? s30.dir : 0) + (bias60 ? s60.dir : 0) + (bias120 ? s120.dir : 0)
+int biasCount = (bias15 ? 1 : 0) + (bias30 ? 1 : 0) + (bias60 ? 1 : 0) + (bias120 ? 1 : 0)
+string biasTxt = biasScore > 0 ? "BULLISH" : biasScore < 0 ? "BEARISH" : "NEUTRAL"
+color  biasCol = biasScore > 0 ? #22c55e : biasScore < 0 ? #ef4444 : #9ca3af
+var int prevBias = 0
+int curBias = biasScore > 0 ? 1 : biasScore < 0 ? -1 : 0
+bool biasFlipBull = curBias == 1 and prevBias != 1
+bool biasFlipBear = curBias == -1 and prevBias != -1
+prevBias := curBias
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ITH / ITL INSIDE HTF FVGs
+// ═══════════════════════════════════════════════════════════════════════════════
+inFvg(array<HFvg> arr, float p, int t) =>
+    string r = ""
+    for f in arr
+        if p >= f.bot and p <= f.top and f.left <= t
+            r := f.tfl + (f.bull ? " FVG ▲" : " FVG ▼")
+    r
+
+whichFvg(float p, int t) =>
+    string r = inFvg(f240, p, t)
+    r := r != "" ? r : inFvg(f120, p, t)
+    r := r != "" ? r : inFvg(f60, p, t)
+    r := r != "" ? r : inFvg(f30, p, t)
+    r := r != "" ? r : inFvg(f15, p, t)
+    r := r != "" ? r : inFvg(f5, p, t)
+    r
+
+stPH = ta.pivothigh(high, stLen, stLen)
+stPL = ta.pivotlow(low, stLen, stLen)
+
+var array<label> itLabels = array.new<label>()
+var float sh1 = na
+var int   shb1 = na
+var int   sht1 = na
+var float sh2 = na
+var float sl1 = na
+var int   slb1 = na
+var int   slt1 = na
+var float sl2 = na
+bool ithInFvg = false
+bool itlInFvg = false
+
+if not na(stPH)
+    // middle short-term high (sh1) is an ITH when both neighbours are lower
+    if showIt and not na(sh1) and not na(sh2) and sh1 > sh2 and sh1 > stPH
+        string z = whichFvg(sh1, sht1)
+        if z != ""
+            ithInFvg := true
+            itLabels.push(label.new(shb1, sh1, "ITH\n" + z, style = label.style_label_down, color = color.new(#ef4444, 25), textcolor = color.white, size = size.tiny, tooltip = "Intermediate-term high inside " + z))
+        else if showAllIt
+            itLabels.push(label.new(shb1, sh1, "ITH", style = label.style_label_down, color = color.new(#6b7280, 50), textcolor = color.white, size = size.tiny))
+    sh2  := sh1
+    sh1  := stPH
+    shb1 := bar_index - stLen
+    sht1 := time[stLen]
+
+if not na(stPL)
+    if showIt and not na(sl1) and not na(sl2) and sl1 < sl2 and sl1 < stPL
+        string z = whichFvg(sl1, slt1)
+        if z != ""
+            itlInFvg := true
+            itLabels.push(label.new(slb1, sl1, "ITL\n" + z, style = label.style_label_up, color = color.new(#22c55e, 25), textcolor = color.white, size = size.tiny, tooltip = "Intermediate-term low inside " + z))
+        else if showAllIt
+            itLabels.push(label.new(slb1, sl1, "ITL", style = label.style_label_up, color = color.new(#6b7280, 50), textcolor = color.white, size = size.tiny))
+    sl2  := sl1
+    sl1  := stPL
+    slb1 := bar_index - stLen
+    slt1 := time[stLen]
+
+capLabels(itLabels, itKeep)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ASIA / LONDON & PREVIOUS DAY HIGH / LOW
+// ═══════════════════════════════════════════════════════════════════════════════
+type Lvl
+    line   ln
+    label  lb
+    float  price
+    bool   isHigh
+    color  col
+    bool   live = true
+    string name = ""
+    int    bar
+
+type Sess
+    bool  active = false
+    float hi
+    float lo
+    int   hiBar
+    int   loBar
+    box   bx
+
+var array<Lvl> sesLvls  = array.new<Lvl>()
+var array<Lvl> pdLvls   = array.new<Lvl>()
+var array<box> sesBoxes = array.new<box>()
+var Sess asiaS = Sess.new()
+var Sess lonS  = Sess.new()
+
+newLvl(array<Lvl> arr, int x, float p, string txt, color col, bool isHigh) =>
+    line  ln = line.new(x, p, bar_index + 3, p, color = col, width = 1)
+    label lb = label.new(bar_index + 3, p, txt, style = label.style_label_left, color = color.new(col, 80), textcolor = col, size = size.tiny)
+    arr.push(Lvl.new(ln, lb, p, isHigh, col, true, txt, x))
+
+dropLvls(array<Lvl> arr, int n) =>
+    while arr.size() > n
+        Lvl old = arr.shift()
+        line.delete(old.ln)
+        label.delete(old.lb)
+    true
+
+updLvls(array<Lvl> arr) =>
+    bool sh = false
+    bool sl = false
+    for lv in arr
+        if lv.live
+            if (lv.isHigh and high > lv.price) or (not lv.isHigh and low < lv.price)
+                lv.live := false
+                if lv.isHigh
+                    sh := true
+                else
+                    sl := true
+                if hideSwept
+                    line.delete(lv.ln)
+                    label.delete(lv.lb)
+                else
+                    line.set_x2(lv.ln, bar_index)
+                    line.set_style(lv.ln, line.style_dotted)
+                    line.set_color(lv.ln, color.new(lv.col, 50))
+                    label.set_x(lv.lb, bar_index)
+                    label.set_textcolor(lv.lb, color.new(lv.col, 50))
+                    label.set_color(lv.lb, color.new(lv.col, 92))
+            else
+                line.set_x2(lv.ln, bar_index + 3)
+                label.set_x(lv.lb, bar_index + 3)
+    [sh, sl]
+
+sesStep(Sess st, bool enabled, string sess, string name, color col) =>
+    bool inS = not na(time(timeframe.period, sess, sesTz))
+    if enabled
+        if inS
+            if not st.active
+                st.active := true
+                st.hi     := high
+                st.lo     := low
+                st.hiBar  := bar_index
+                st.loBar  := bar_index
+                st.bx     := na
+                if sesBox
+                    st.bx := box.new(bar_index, high, bar_index, low, border_color = color.new(col, 60), bgcolor = color.new(col, 92), text = name, text_size = size.tiny, text_color = col, text_halign = text.align_left, text_valign = text.align_top)
+                    sesBoxes.push(st.bx)
+            else
+                if high > st.hi
+                    st.hi    := high
+                    st.hiBar := bar_index
+                if low < st.lo
+                    st.lo    := low
+                    st.loBar := bar_index
+            if not na(st.bx)
+                box.set_top(st.bx, st.hi)
+                box.set_bottom(st.bx, st.lo)
+                box.set_right(st.bx, bar_index)
+        else if st.active
+            st.active := false
+            newLvl(sesLvls, st.hiBar, st.hi, name + " H", col, true)
+            newLvl(sesLvls, st.loBar, st.lo, name + " L", col, false)
+    true
+
+[sesSweptH, sesSweptL] = updLvls(sesLvls)
+[pdhSwept, pdlSwept]   = updLvls(pdLvls)
+sesStep(asiaS, showAsia and timeframe.isintraday, asiaSess, "ASIA", asiaCol)
+sesStep(lonS,  showLon and timeframe.isintraday,  lonSess,  "LONDON", lonCol)
+dropLvls(sesLvls, sesDays * 4)
+capBoxes(sesBoxes, sesDays * 2)
+
+var float dHi = na
+var float dLo = na
+var int   dHiBar = na
+var int   dLoBar = na
+var int   dayCount = 0
+if timeframe.change("D")
+    dayCount += 1
+    if showPd and timeframe.isintraday and dayCount >= 2 and not na(dHi)
+        newLvl(pdLvls, dHiBar, dHi, "PDH", pdCol, true)
+        newLvl(pdLvls, dLoBar, dLo, "PDL", pdCol, false)
+        dropLvls(pdLvls, pdDays * 2)
+    dHi    := high
+    dLo    := low
+    dHiBar := bar_index
+    dLoBar := bar_index
+else
+    if na(dHi) or high > dHi
+        dHi    := high
+        dHiBar := bar_index
+    if na(dLo) or low < dLo
+        dLo    := low
+        dLoBar := bar_index
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RECENT DOL
+// ═══════════════════════════════════════════════════════════════════════════════
+type Liq
+    float price
+    int   bar
+
+swPH = ta.pivothigh(high, swLen, swLen)
+swPL = ta.pivotlow(low, swLen, swLen)
+var array<Liq> liqHighs = array.new<Liq>()
+var array<Liq> liqLows  = array.new<Liq>()
+
+if liqHighs.size() > 0
+    for i = liqHighs.size() - 1 to 0
+        if high > liqHighs.get(i).price
+            liqHighs.remove(i)
+if liqLows.size() > 0
+    for i = liqLows.size() - 1 to 0
+        if low < liqLows.get(i).price
+            liqLows.remove(i)
+if not na(swPH)
+    liqHighs.push(Liq.new(swPH, bar_index - swLen))
+    if liqHighs.size() > 60
+        liqHighs.shift()
+if not na(swPL)
+    liqLows.push(Liq.new(swPL, bar_index - swLen))
+    if liqLows.size() > 60
+        liqLows.shift()
+
+findDol(bool up, float ref) =>
+    float  best = na
+    string nm   = ""
+    int    bx   = na
+    if up
+        for lq in liqHighs
+            if lq.price > ref and (na(best) or lq.price < best)
+                best := lq.price
+                nm   := "Swing H"
+                bx   := lq.bar
+        for lv in sesLvls
+            if lv.live and lv.isHigh and lv.price > ref and (na(best) or lv.price < best)
+                best := lv.price
+                nm   := lv.name
+                bx   := lv.bar
+        for lv in pdLvls
+            if lv.live and lv.isHigh and lv.price > ref and (na(best) or lv.price < best)
+                best := lv.price
+                nm   := lv.name
+                bx   := lv.bar
+    else
+        for lq in liqLows
+            if lq.price < ref and (na(best) or lq.price > best)
+                best := lq.price
+                nm   := "Swing L"
+                bx   := lq.bar
+        for lv in sesLvls
+            if lv.live and not lv.isHigh and lv.price < ref and (na(best) or lv.price > best)
+                best := lv.price
+                nm   := lv.name
+                bx   := lv.bar
+        for lv in pdLvls
+            if lv.live and not lv.isHigh and lv.price < ref and (na(best) or lv.price > best)
+                best := lv.price
+                nm   := lv.name
+                bx   := lv.bar
+    [best, nm, bx]
+
+var array<line>  dolLines  = array.new<line>()
+var array<label> dolLabels = array.new<label>()
+[dUp, dUpNm, dUpBar] = findDol(true, high)
+[dDn, dDnNm, dDnBar] = findDol(false, low)
+
+if barstate.islast
+    for l in dolLines
+        line.delete(l)
+    for l in dolLabels
+        label.delete(l)
+    dolLines.clear()
+    dolLabels.clear()
+    if showDol
+        if not na(dUp)
+            bool prim = biasScore > 0
+            dolLines.push(line.new(dUpBar, dUp, bar_index + dolExtend, dUp, color = dolColor, style = line.style_dashed, width = prim ? 2 : 1))
+            dolLabels.push(label.new(bar_index + dolExtend, dUp, (prim ? "★ " : "") + "DOL: " + dUpNm, style = label.style_label_left, color = color.new(dolColor, prim ? 40 : 75), textcolor = prim ? color.white : dolColor, size = lblSize))
+        if not na(dDn)
+            bool prim = biasScore < 0
+            dolLines.push(line.new(dDnBar, dDn, bar_index + dolExtend, dDn, color = dolColor, style = line.style_dashed, width = prim ? 2 : 1))
+            dolLabels.push(label.new(bar_index + dolExtend, dDn, (prim ? "★ " : "") + "DOL: " + dDnNm, style = label.style_label_left, color = color.new(dolColor, prim ? 40 : 75), textcolor = prim ? color.white : dolColor, size = lblSize))
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BIAS PANEL
+// ═══════════════════════════════════════════════════════════════════════════════
+pos = panelPos == "Top left" ? position.top_left : panelPos == "Bottom right" ? position.bottom_right : panelPos == "Bottom left" ? position.bottom_left : position.top_right
+var table panel = table.new(pos, 2, 8, bgcolor = color.new(#0b0f14, 10), border_width = 1, border_color = color.new(#334155, 40))
+
+tfRow(int row, string name, TfState st, bool used) =>
+    color c = not used ? #4b5563 : st.dir > 0 ? #22c55e : st.dir < 0 ? #ef4444 : #9ca3af
+    table.cell(panel, 0, row, name, text_color = #9ca3af, text_size = size.small, text_halign = text.align_left)
+    table.cell(panel, 1, row, used ? st.txt : "off", text_color = c, text_size = size.small, text_halign = text.align_left)
+
+if showBias and barstate.islast
+    table.cell(panel, 0, 0, "HTF BIAS", text_color = color.white, text_size = size.small, bgcolor = color.new(biasCol, 20))
+    table.cell(panel, 1, 0, biasTxt + "  (" + (biasScore > 0 ? "+" : "") + str.tostring(biasScore) + " / " + str.tostring(biasCount) + ")", text_color = color.white, text_size = size.small, bgcolor = color.new(biasCol, 20))
+    tfRow(1, "15M", s15, bias15)
+    tfRow(2, "30M", s30, bias30)
+    tfRow(3, "1H",  s60, bias60)
+    tfRow(4, "2H",  s120, bias120)
+    table.cell(panel, 0, 5, "DOL ▲", text_color = #9ca3af, text_size = size.small, text_halign = text.align_left)
+    table.cell(panel, 1, 5, na(dUp) ? "—" : dUpNm + "  " + str.tostring(dUp, format.mintick), text_color = dolColor, text_size = size.small, text_halign = text.align_left)
+    table.cell(panel, 0, 6, "DOL ▼", text_color = #9ca3af, text_size = size.small, text_halign = text.align_left)
+    table.cell(panel, 1, 6, na(dDn) ? "—" : dDnNm + "  " + str.tostring(dDn, format.mintick), text_color = dolColor, text_size = size.small, text_halign = text.align_left)
+    string tgt = biasScore > 0 ? (na(dUp) ? "—" : "★ " + dUpNm) : biasScore < 0 ? (na(dDn) ? "—" : "★ " + dDnNm) : "wait for bias"
+    table.cell(panel, 0, 7, "Target", text_color = #9ca3af, text_size = size.small, text_halign = text.align_left)
+    table.cell(panel, 1, 7, tgt, text_color = biasCol, text_size = size.small, text_halign = text.align_left)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ═══════════════════════════════════════════════════════════════════════════════
+alertcondition(biasFlipBull, "Bias turned bullish", "HTF FVG bias turned BULLISH on {{ticker}}")
+alertcondition(biasFlipBear, "Bias turned bearish", "HTF FVG bias turned BEARISH on {{ticker}}")
+alertcondition(ithInFvg, "ITH inside HTF FVG", "ITH formed inside an HTF FVG on {{ticker}}")
+alertcondition(itlInFvg, "ITL inside HTF FVG", "ITL formed inside an HTF FVG on {{ticker}}")
+alertcondition(sesSweptH, "Asia/London high swept", "Session high swept on {{ticker}}")
+alertcondition(sesSweptL, "Asia/London low swept", "Session low swept on {{ticker}}")
+alertcondition(pdhSwept, "PDH swept", "Previous day high swept on {{ticker}}")
+alertcondition(pdlSwept, "PDL swept", "Previous day low swept on {{ticker}}")
