@@ -26,3 +26,22 @@ Run it on a low timeframe (1m–5m) execution chart. HTF FVGs and the PO3 candle
 Create an alert on the indicator and pick one of: Bullish/Bearish V-Shape, Bullish/Bearish SMT, LRL broken, Buy-side/Sell-side liquidity swept, Session high/low swept, PDH/PDL swept.
 
 > This tool visualizes concepts. It is not a signal service or financial advice.
+
+---
+
+# HTF FVG Scalper (`HTF-FVG-IFVG-Scalper.pine`)
+
+A second, separate indicator built for **NQ1! / MNQ1! scalping**.
+
+| Feature | Details |
+|---|---|
+| **HTF FVGs** | 5m, 15m, 30m, 1H, 2H, 4H and Daily, each with its **own on/off switch and colour**. They don't repaint. When price trades into one, the box turns solid and is labelled **TAPPED**. |
+| **Asia / London** | The session high and low are drawn as lines until swept (Asia 20:00–00:00, London 02:00–05:00 NY; editable). |
+| **Displacement** | Large-bodied candles (body ≥ 1.5× ATR and ≥ 60% of the range) are marked with triangles, with optional candle colouring. |
+| **V-Shape IFVG entry** | On the entry timeframe (**1m / 2m / 3m / 5m**): an FVG forms, then within *N* bars a candle **closes through it** (inversion), optionally with displacement. The IFVG zone is boxed and labelled. |
+| **Brackets** | Entry (inversion close), SL (leg extreme + buffer) and TP (R multiple). They're **only drawn if an HTF FVG in the same direction was tapped** within the last *N* bars. SMT in the same direction can also be required. |
+| **SMT** | Divergence against the **symbol you choose** in settings (default `CME_MINI:ES1!`; use `CME_MINI:MES1!` for MNQ). |
+| **Status panel** | Shows the entry TF, the last bullish/bearish HTF tap, the SMT state and the bracket mode. |
+| **Alerts** | Long/short setup (the message includes entry, SL and TP), any IFVG, HTF FVG tapped, SMT, session high/low swept. |
+
+**Chart:** use a **1-minute** chart so every entry timeframe works. If the entry TF is set lower than the chart TF, the chart TF is used and the panel shows a ⚠ warning.
