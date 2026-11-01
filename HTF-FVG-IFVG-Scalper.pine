@@ -143,10 +143,10 @@ htfStep(array<HFvg> arr, string tf, bool isOn, color col, float h1, float l1, fl
         if chg and not na(t)
             if l1 > h3
                 string tx = tfLabel(tf) + " FVG ▲"
-                arr.push(HFvg.new(box.new(t, l1, time + ext, h3, xloc = xloc.bar_time, border_color = color.new(col, 50), border_style = line.style_dashed, bgcolor = color.new(col, htfTransp), text = tx, text_size = lblSize, text_color = col, text_halign = text.align_right, text_valign = text.align_center), l1, h3, true, tx))
+                arr.push(HFvg.new(box.new(t, l1, time + ext, h3, xloc = xloc.bar_time, border_color = color.new(col, 50), border_style = line.style_dashed, bgcolor = color.new(col, htfTransp), text = tx, text_size = lblSize, text_color = col, text_halign = text.align_center, text_valign = text.align_center), l1, h3, true, tx))
             if h1 < l3
                 string tx = tfLabel(tf) + " FVG ▼"
-                arr.push(HFvg.new(box.new(t, l3, time + ext, h1, xloc = xloc.bar_time, border_color = color.new(col, 50), border_style = line.style_dashed, bgcolor = color.new(col, htfTransp), text = tx, text_size = lblSize, text_color = col, text_halign = text.align_right, text_valign = text.align_center), l3, h1, false, tx))
+                arr.push(HFvg.new(box.new(t, l3, time + ext, h1, xloc = xloc.bar_time, border_color = color.new(col, 50), border_style = line.style_dashed, bgcolor = color.new(col, htfTransp), text = tx, text_size = lblSize, text_color = col, text_halign = text.align_center, text_valign = text.align_center), l3, h1, false, tx))
             while arr.size() > htfMax
                 box.delete(arr.shift().bx)
         if arr.size() > 0
