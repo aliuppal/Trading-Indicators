@@ -1,6 +1,6 @@
 // This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // V-Shape Liquidity Toolkit
-// DOL mapping • HTF FVGs (15m–4H) • Low Resistance Liquidity • V-Shape confirmations • SMT • HTF PO3 candle
+// DOL mapping • HTF FVGs (15m–4H) • Low Resistance Liquidity • V-Shape confirmations • SMT • HTF PO3 candle • Asia / London sessions • PDH / PDL
 //
 // Workflow: HTF narrative first. DOL second. V-Shape confirmation last.
 // This is a visualization tool, not a signal service.
@@ -66,6 +66,22 @@ smtSymIn  = input.string("", "Correlated symbol (blank = auto)", group = G_SMT, 
 smtLen    = input.int(5, "Pivot length", minval = 1, group = G_SMT)
 smtMaxGap = input.int(60, "Max bars between pivots", minval = 5, group = G_SMT)
 smtColor  = input.color(#22d3ee, "Color", group = G_SMT)
+
+G_SES = "7 · Sessions & Previous Day"
+sesTz       = input.string("America/New_York", "Session timezone", group = G_SES, tooltip = "IANA timezone the session times below are written in.")
+showAsia    = input.bool(true, "", inline = "as", group = G_SES)
+asiaSess    = input.session("2000-0000", "Asia", inline = "as", group = G_SES)
+asiaCol     = input.color(#a78bfa, "", inline = "as", group = G_SES)
+showLon     = input.bool(true, "", inline = "lo", group = G_SES)
+lonSess     = input.session("0200-0500", "London", inline = "lo", group = G_SES)
+lonCol      = input.color(#f472b6, "", inline = "lo", group = G_SES)
+sesBox      = input.bool(true, "Shade session range", group = G_SES)
+sesLevels   = input.bool(true, "Extend session high/low until swept", group = G_SES)
+sesDays     = input.int(2, "Sessions to keep", minval = 1, maxval = 20, group = G_SES)
+showPd      = input.bool(true, "", inline = "pd", group = G_SES)
+pdCol       = input.color(#94a3b8, "Previous day high / low", inline = "pd", group = G_SES)
+pdDays      = input.int(1, "Days of PDH/PDL to keep", minval = 1, maxval = 10, group = G_SES)
+hideSwept   = input.bool(false, "Delete levels once swept (otherwise faded)", group = G_SES)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPES & HELPERS
@@ -650,6 +666,136 @@ if barstate.islast
             po3Labels.push(label.new(pStartBar, pO, "HTF OPEN", style = label.style_label_down, color = color.new(po3Accent, 80), textcolor = po3Accent, size = size.tiny))
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// 7 · SESSIONS (ASIA / LONDON) & PREVIOUS DAY HIGH / LOW
+// ═══════════════════════════════════════════════════════════════════════════════
+type Lvl
+    line  ln
+    label lb
+    float price
+    bool  isHigh
+    color col
+    bool  live = true
+
+type Sess
+    bool  active = false
+    float hi
+    float lo
+    int   hiBar
+    int   loBar
+    box   bx
+
+var array<Lvl> sesLvls  = array.new<Lvl>()
+var array<Lvl> pdLvls   = array.new<Lvl>()
+var array<box> sesBoxes = array.new<box>()
+var Sess asiaS = Sess.new()
+var Sess lonS  = Sess.new()
+
+newLvl(array<Lvl> arr, int x, float p, string txt, color col, bool isHigh) =>
+    line  ln = line.new(x, p, bar_index + 3, p, color = col, width = 1)
+    label lb = label.new(bar_index + 3, p, txt, style = label.style_label_left, color = color.new(col, 80), textcolor = col, size = size.tiny)
+    arr.push(Lvl.new(ln, lb, p, isHigh, col))
+
+capLvls(array<Lvl> arr, int n) =>
+    while arr.size() > n
+        Lvl lv = arr.shift()
+        line.delete(lv.ln)
+        label.delete(lv.lb)
+    true
+
+updLvls(array<Lvl> arr) =>
+    bool sh = false
+    bool sl = false
+    for lv in arr
+        if lv.live
+            if (lv.isHigh and high > lv.price) or (not lv.isHigh and low < lv.price)
+                lv.live := false
+                if lv.isHigh
+                    sh := true
+                else
+                    sl := true
+                if hideSwept
+                    line.delete(lv.ln)
+                    label.delete(lv.lb)
+                else
+                    line.set_x2(lv.ln, bar_index)
+                    line.set_style(lv.ln, line.style_dotted)
+                    line.set_color(lv.ln, color.new(lv.col, 50))
+                    label.set_x(lv.lb, bar_index)
+                    label.set_textcolor(lv.lb, color.new(lv.col, 50))
+                    label.set_color(lv.lb, color.new(lv.col, 92))
+            else
+                line.set_x2(lv.ln, bar_index + 3)
+                label.set_x(lv.lb, bar_index + 3)
+    [sh, sl]
+
+sesStep(Sess st, bool enabled, string sess, string name, color col) =>
+    bool inS = not na(time(timeframe.period, sess, sesTz))
+    if enabled
+        if inS
+            if not st.active
+                st.active := true
+                st.hi     := high
+                st.lo     := low
+                st.hiBar  := bar_index
+                st.loBar  := bar_index
+                st.bx     := na
+                if sesBox
+                    st.bx := box.new(bar_index, high, bar_index, low, border_color = color.new(col, 60), bgcolor = color.new(col, 90), text = name, text_size = size.tiny, text_color = col, text_halign = text.align_left, text_valign = text.align_top)
+                    sesBoxes.push(st.bx)
+            else
+                if high > st.hi
+                    st.hi    := high
+                    st.hiBar := bar_index
+                if low < st.lo
+                    st.lo    := low
+                    st.loBar := bar_index
+            if not na(st.bx)
+                box.set_top(st.bx, st.hi)
+                box.set_bottom(st.bx, st.lo)
+                box.set_right(st.bx, bar_index)
+        else if st.active
+            st.active := false
+            if sesLevels
+                newLvl(sesLvls, st.hiBar, st.hi, name + " H", col, true)
+                newLvl(sesLvls, st.loBar, st.lo, name + " L", col, false)
+    true
+
+bool sesIntraday = timeframe.isintraday
+
+// Update existing levels first (a level is never swept on the bar it is created)
+[sesSweptH, sesSweptL] = updLvls(sesLvls)
+[pdhSwept, pdlSwept]   = updLvls(pdLvls)
+
+sesStep(asiaS, showAsia and sesIntraday, asiaSess, "ASIA", asiaCol)
+sesStep(lonS,  showLon and sesIntraday,  lonSess,  "LONDON", lonCol)
+capLvls(sesLvls, sesDays * 4)
+capBoxes(sesBoxes, sesDays * 2)
+
+// Previous day high / low (tracked on the chart so lines start at the actual high/low bar)
+var float dHi = na
+var float dLo = na
+var int   dHiBar = na
+var int   dLoBar = na
+var int   dayCount = 0
+if timeframe.change("D")
+    dayCount += 1
+    if showPd and sesIntraday and dayCount >= 2 and not na(dHi)
+        newLvl(pdLvls, dHiBar, dHi, "PDH", pdCol, true)
+        newLvl(pdLvls, dLoBar, dLo, "PDL", pdCol, false)
+        capLvls(pdLvls, pdDays * 2)
+    dHi    := high
+    dLo    := low
+    dHiBar := bar_index
+    dLoBar := bar_index
+else
+    if na(dHi) or high > dHi
+        dHi    := high
+        dHiBar := bar_index
+    if na(dLo) or low < dLo
+        dLo    := low
+        dLoBar := bar_index
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // ALERTS
 // ═══════════════════════════════════════════════════════════════════════════════
 alertcondition(bullV, "Bullish V-Shape", "Bullish V-Shape confirmation on {{ticker}} ({{interval}})")
@@ -660,3 +806,7 @@ alertcondition(lrlBullBreak, "LRL broken (bullish)", "Lower-highs LRL broken on 
 alertcondition(lrlBearBreak, "LRL broken (bearish)", "Higher-lows LRL broken on {{ticker}} ({{interval}})")
 alertcondition(sweptHigh, "Buy-side liquidity swept", "Swing high swept on {{ticker}} ({{interval}})")
 alertcondition(sweptLow, "Sell-side liquidity swept", "Swing low swept on {{ticker}} ({{interval}})")
+alertcondition(sesSweptH, "Session high swept", "Asia/London session high swept on {{ticker}} ({{interval}})")
+alertcondition(sesSweptL, "Session low swept", "Asia/London session low swept on {{ticker}} ({{interval}})")
+alertcondition(pdhSwept, "PDH swept", "Previous day high swept on {{ticker}} ({{interval}})")
+alertcondition(pdlSwept, "PDL swept", "Previous day low swept on {{ticker}} ({{interval}})")

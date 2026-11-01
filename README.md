@@ -1,6 +1,6 @@
 # V-Shape Liquidity Toolkit (TradingView / Pine Script v6)
 
-One overlay indicator with six modules you can switch on and off:
+One overlay indicator with seven modules you can switch on and off:
 
 | # | Module | What it draws |
 |---|--------|---------------|
@@ -10,6 +10,7 @@ One overlay indicator with six modules you can switch on and off:
 | 4 | **HTF PO3 candle** | The current HTF candle (plus previous ones) drawn to the right of price, with the HTF open line and `A` / `M` / `D` markers (accumulation open, manipulation wick, distribution close). |
 | 5 | **V-Shape confirmation** | Price runs from a leg extreme, **sweeps a swing low/high**, then **closes back beyond the leg's origin** within *N* bars. The V gets a box and is labelled REVERSAL or CONTINUATION based on the external structure. Optional entry / SL / target boxes (target = next DOL, or a fixed RR). |
 | 6 | **SMT** | Divergence between correlated markets at swing pivots (e.g. NQ makes a lower low while ES makes a higher low). The correlated symbol is picked for you for NQ/ES/MNQ/MES/YM/RTY, EURUSD/GBPUSD and BTC/ETH, or you can set your own. |
+| 7 | **Sessions & previous day** | Shades the **Asia** (20:00–00:00 NY) and **London** (02:00–05:00 NY) session ranges. Each session high/low (`ASIA H/L`, `LONDON H/L`) and the **previous day high/low** (`PDH` / `PDL`) is extended right until price sweeps it, then fades or is deleted. Session times and timezone are editable. |
 
 ## Install
 1. Open TradingView → **Pine Editor** (bottom panel).
@@ -22,6 +23,6 @@ One overlay indicator with six modules you can switch on and off:
 Run it on a low timeframe (1m–5m) execution chart. HTF FVGs and the PO3 candle only show when the chart timeframe is lower than the HTF you selected.
 
 ## Alerts
-Create an alert on the indicator and pick one of: Bullish/Bearish V-Shape, Bullish/Bearish SMT, LRL broken, Buy-side/Sell-side liquidity swept.
+Create an alert on the indicator and pick one of: Bullish/Bearish V-Shape, Bullish/Bearish SMT, LRL broken, Buy-side/Sell-side liquidity swept, Session high/low swept, PDH/PDL swept.
 
 > This tool visualizes concepts. It is not a signal service or financial advice.
