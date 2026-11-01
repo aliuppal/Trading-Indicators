@@ -1,6 +1,6 @@
 // This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
 // HTF FVG Scalper — IFVG entries
-// HTF FVGs (5m • 15m • 30m • 1H • 2H • 4H • Daily) • Asia / London highs & lows • Displacement
+// HTF FVGs (5m • 15m • 30m • 1H • 2H • 4H • Daily) • Asia / London highs & lows • PDH / PDL • DOL • LRL • Displacement
 // V-Shape IFVG entries on a low timeframe (1m / 2m / 3m / 5m) • SMT vs ES • Brackets only after an HTF FVG tap
 // Built for NQ1! / MNQ1! scalping. Visualization tool — not financial advice.
 
@@ -43,7 +43,9 @@ brNeedTap   = input.bool(true, "Only if an HTF FVG was tapped", group = G_BR, to
 tapWindow   = input.int(30, "Tap valid for (chart bars)", minval = 1, maxval = 500, group = G_BR)
 brSmt       = input.bool(false, "Also require SMT in the same direction", group = G_BR)
 smtWindow   = input.int(20, "SMT valid for (chart bars)", minval = 1, maxval = 500, group = G_BR)
-brRR        = input.float(2.0, "Take profit (R multiple)", minval = 0.5, step = 0.25, group = G_BR)
+brTpMode    = input.string("DOL", "Take profit at", options = ["DOL", "R multiple"], group = G_BR, tooltip = "DOL = next untaken liquidity in the trade direction (swing high/low, PDH/PDL, Asia/London high/low). Falls back to the R multiple if no DOL is at least the minimum R away.")
+brMinR      = input.float(1.0, "Min R for DOL target", minval = 0.25, step = 0.25, group = G_BR)
+brRR        = input.float(2.0, "R multiple (target / fallback)", minval = 0.5, step = 0.25, group = G_BR)
 brBuffer    = input.int(4, "Stop buffer (ticks)", minval = 0, group = G_BR)
 brLen       = input.int(20, "Bracket length (bars)", minval = 3, maxval = 300, group = G_BR)
 brKeep      = input.int(8, "Keep last N brackets", minval = 1, maxval = 50, group = G_BR)
@@ -71,7 +73,21 @@ lonSess   = input.session("0200-0500", "London", inline = "lo", group = G_SES)
 lonCol    = input.color(#f472b6, "", inline = "lo", group = G_SES)
 sesBox    = input.bool(false, "Shade session range", group = G_SES)
 sesDays   = input.int(2, "Sessions to keep", minval = 1, maxval = 10, group = G_SES)
+showPd    = input.bool(true, "", inline = "pd", group = G_SES)
+pdCol     = input.color(#94a3b8, "Previous day high / low (PDH / PDL)", inline = "pd", group = G_SES)
+pdDays    = input.int(1, "Days of PDH/PDL to keep", minval = 1, maxval = 10, group = G_SES)
 hideSwept = input.bool(false, "Delete levels once swept (otherwise faded)", group = G_SES)
+
+G_STR = "DOL & LRL"
+extLen      = input.int(10, "External swing length", minval = 2, group = G_STR)
+intLen      = input.int(3, "Internal swing length", minval = 1, group = G_STR)
+showDol     = input.bool(true, "Show DOL (draw on liquidity)", group = G_STR)
+dolInternal = input.bool(true, "Include internal swings in DOL", group = G_STR)
+dolColor    = input.color(#2f80ed, "DOL colour", group = G_STR)
+dolExtend   = input.int(15, "DOL extend right (bars)", minval = 1, maxval = 300, group = G_STR)
+showLrl     = input.bool(true, "Show LRL (low resistance liquidity)", group = G_STR)
+lrlColor    = input.color(#f59e0b, "LRL colour", group = G_STR)
+lrlKeep     = input.int(3, "Keep last N broken LRLs", minval = 0, maxval = 30, group = G_STR)
 
 G_UI = "Display"
 showTable = input.bool(true, "Show status panel", group = G_UI)
@@ -319,6 +335,205 @@ bool longIfvg  = showIfvg and etfNew and eLong
 bool shortIfvg = showIfvg and etfNew and eShort
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// SWINGS / LIQUIDITY POOL
+// ═══════════════════════════════════════════════════════════════════════════════
+type Liq
+    float price
+    int   bar
+    bool  external = false
+
+intPH = ta.pivothigh(high, intLen, intLen)
+intPL = ta.pivotlow(low, intLen, intLen)
+extPH = ta.pivothigh(high, extLen, extLen)
+extPL = ta.pivotlow(low, extLen, extLen)
+
+var array<Liq> liqHighs = array.new<Liq>()
+var array<Liq> liqLows  = array.new<Liq>()
+
+if liqHighs.size() > 0
+    for i = liqHighs.size() - 1 to 0
+        if high > liqHighs.get(i).price
+            liqHighs.remove(i)
+if liqLows.size() > 0
+    for i = liqLows.size() - 1 to 0
+        if low < liqLows.get(i).price
+            liqLows.remove(i)
+
+if not na(intPH)
+    liqHighs.push(Liq.new(intPH, bar_index - intLen, false))
+    if liqHighs.size() > 100
+        liqHighs.shift()
+if not na(intPL)
+    liqLows.push(Liq.new(intPL, bar_index - intLen, false))
+    if liqLows.size() > 100
+        liqLows.shift()
+if not na(extPH)
+    int  pb    = bar_index - extLen
+    bool found = false
+    for lq in liqHighs
+        if lq.bar == pb
+            lq.external := true
+            found := true
+    if not found
+        liqHighs.push(Liq.new(extPH, pb, true))
+if not na(extPL)
+    int  pb    = bar_index - extLen
+    bool found = false
+    for lq in liqLows
+        if lq.bar == pb
+            lq.external := true
+            found := true
+    if not found
+        liqLows.push(Liq.new(extPL, pb, true))
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DOL — DRAW ON LIQUIDITY
+// ═══════════════════════════════════════════════════════════════════════════════
+var array<line>  dolLines  = array.new<line>()
+var array<label> dolLabels = array.new<label>()
+
+drawDol(Liq lq, bool isHigh) =>
+    string txt = "DOL: " + (lq.external ? "" : "Internal ") + "Swing " + (isHigh ? "H" : "L")
+    dolLines.push(line.new(lq.bar, lq.price, bar_index + dolExtend, lq.price, color = dolColor, style = line.style_dashed, width = 1))
+    dolLabels.push(label.new(bar_index + dolExtend, lq.price, txt, style = label.style_label_left, color = color.new(dolColor, 75), textcolor = dolColor, size = lblSize))
+
+if barstate.islast
+    for l in dolLines
+        line.delete(l)
+    for l in dolLabels
+        label.delete(l)
+    dolLines.clear()
+    dolLabels.clear()
+    if showDol
+        Liq hE = na
+        Liq hI = na
+        Liq lE = na
+        Liq lI = na
+        for lq in liqHighs
+            if lq.external
+                if na(hE) or lq.price < hE.price
+                    hE := lq
+            else
+                if na(hI) or lq.price < hI.price
+                    hI := lq
+        for lq in liqLows
+            if lq.external
+                if na(lE) or lq.price > lE.price
+                    lE := lq
+            else
+                if na(lI) or lq.price > lI.price
+                    lI := lq
+        if not na(hE)
+            drawDol(hE, true)
+        if dolInternal and not na(hI) and (na(hE) or hI.price < hE.price)
+            drawDol(hI, true)
+        if not na(lE)
+            drawDol(lE, false)
+        if dolInternal and not na(lI) and (na(lE) or lI.price > lE.price)
+            drawDol(lI, false)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LRL — LOW RESISTANCE LIQUIDITY
+// ═══════════════════════════════════════════════════════════════════════════════
+// Trendline through a run of internal lower highs (or higher lows). A close through it = "BREAKS LRL".
+var array<line>  lrlLines  = array.new<line>()
+var array<label> lrlLabels = array.new<label>()
+var line  lrlDn       = na
+var label lrlDnLbl    = na
+var bool  lrlDnActive = false
+var int   lhCount     = 0
+var int   lhStartBar  = na
+var float lhStartP    = na
+var float prevPH      = na
+var int   prevPHBar   = na
+var line  lrlUp       = na
+var label lrlUpLbl    = na
+var bool  lrlUpActive = false
+var int   hlCount     = 0
+var int   hlStartBar  = na
+var float hlStartP    = na
+var float prevPL      = na
+var int   prevPLBar   = na
+bool lrlBullBreak = false
+bool lrlBearBreak = false
+
+if lrlDnActive
+    float lv = line.get_price(lrlDn, bar_index)
+    if close > lv
+        line.set_xy2(lrlDn, bar_index, lv)
+        line.set_extend(lrlDn, extend.none)
+        lrlLabels.push(label.new(bar_index, lv, "BREAKS LRL", style = label.style_label_up, color = color.new(lrlColor, 75), textcolor = lrlColor, size = lblSize))
+        lrlDnActive  := false
+        lhCount      := 0
+        prevPH       := na
+        lrlBullBreak := true
+if lrlUpActive
+    float lv = line.get_price(lrlUp, bar_index)
+    if close < lv
+        line.set_xy2(lrlUp, bar_index, lv)
+        line.set_extend(lrlUp, extend.none)
+        lrlLabels.push(label.new(bar_index, lv, "BREAKS LRL", style = label.style_label_down, color = color.new(lrlColor, 75), textcolor = lrlColor, size = lblSize))
+        lrlUpActive  := false
+        hlCount      := 0
+        prevPL       := na
+        lrlBearBreak := true
+
+if not na(intPH)
+    int phB = bar_index - intLen
+    if not na(prevPH) and intPH < prevPH
+        if lhCount == 0
+            lhStartBar := prevPHBar
+            lhStartP   := prevPH
+        lhCount += 1
+        if showLrl
+            if lrlDnActive
+                line.set_xy2(lrlDn, phB, intPH)
+                label.set_xy(lrlDnLbl, phB, intPH)
+            else
+                lrlDn       := line.new(lhStartBar, lhStartP, phB, intPH, extend = extend.right, color = lrlColor, style = line.style_dashed, width = 2)
+                lrlDnLbl    := label.new(phB, intPH, "LRL", style = label.style_label_down, color = color.new(lrlColor, 75), textcolor = lrlColor, size = lblSize)
+                lrlDnActive := true
+                lrlLines.push(lrlDn)
+                lrlLabels.push(lrlDnLbl)
+    else
+        lhCount := 0
+        if lrlDnActive
+            line.delete(lrlDn)
+            label.delete(lrlDnLbl)
+            lrlDnActive := false
+    prevPH    := intPH
+    prevPHBar := phB
+
+if not na(intPL)
+    int plB = bar_index - intLen
+    if not na(prevPL) and intPL > prevPL
+        if hlCount == 0
+            hlStartBar := prevPLBar
+            hlStartP   := prevPL
+        hlCount += 1
+        if showLrl
+            if lrlUpActive
+                line.set_xy2(lrlUp, plB, intPL)
+                label.set_xy(lrlUpLbl, plB, intPL)
+            else
+                lrlUp       := line.new(hlStartBar, hlStartP, plB, intPL, extend = extend.right, color = lrlColor, style = line.style_dashed, width = 2)
+                lrlUpLbl    := label.new(plB, intPL, "LRL", style = label.style_label_up, color = color.new(lrlColor, 75), textcolor = lrlColor, size = lblSize)
+                lrlUpActive := true
+                lrlLines.push(lrlUp)
+                lrlLabels.push(lrlUpLbl)
+    else
+        hlCount := 0
+        if lrlUpActive
+            line.delete(lrlUp)
+            label.delete(lrlUpLbl)
+            lrlUpActive := false
+    prevPL    := intPL
+    prevPLBar := plB
+
+capLines(lrlLines, lrlKeep + 2)
+capLabels(lrlLabels, (lrlKeep + 2) * 2)
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // SMT DIVERGENCE (vs user-selected symbol, default ES)
 // ═══════════════════════════════════════════════════════════════════════════════
 [h2, l2] = request.security(smtSym, timeframe.period, [high, low], ignore_invalid_symbol = true)
@@ -373,51 +588,7 @@ bool bullSmtOk = not na(lastBullSmt) and bar_index - lastBullSmt <= smtWindow
 bool bearSmtOk = not na(lastBearSmt) and bar_index - lastBearSmt <= smtWindow
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// IFVG SIGNALS & BRACKETS
-// ═══════════════════════════════════════════════════════════════════════════════
-var array<box>   sigBoxes  = array.new<box>()
-var array<label> sigLabels = array.new<label>()
-var array<box>   brBoxes   = array.new<box>()
-var array<line>  brLines   = array.new<line>()
-
-bool showLongSig  = longIfvg and (sigFilter == "All" or bullTapOk)
-bool showShortSig = shortIfvg and (sigFilter == "All" or bearTapOk)
-bool longSetup    = showLongSig and (not brNeedTap or bullTapOk) and (not brSmt or bullSmtOk)
-bool shortSetup   = showShortSig and (not brNeedTap or bearTapOk) and (not brSmt or bearSmtOk)
-
-float buf = brBuffer * syminfo.mintick
-string etfLbl = tfLabel(etf)
-
-if showLongSig
-    sigBoxes.push(box.new(eT, eTop, time, eBot, xloc = xloc.bar_time, border_color = color.new(#22c55e, 30), bgcolor = color.new(#22c55e, 80), text = etfLbl + " V-IFVG ▲", text_size = size.tiny, text_color = #22c55e, text_halign = text.align_left, text_valign = text.align_bottom))
-    sigLabels.push(label.new(eSigT, eBot, "▲ IFVG" + (bullTapOk ? "\n" + lastBullTapTf + " tap" : ""), xloc = xloc.bar_time, style = label.style_label_up, color = color.new(#22c55e, 20), textcolor = color.white, size = lblSize))
-if showShortSig
-    sigBoxes.push(box.new(eT, eTop, time, eBot, xloc = xloc.bar_time, border_color = color.new(#ef4444, 30), bgcolor = color.new(#ef4444, 80), text = etfLbl + " V-IFVG ▼", text_size = size.tiny, text_color = #ef4444, text_halign = text.align_left, text_valign = text.align_top))
-    sigLabels.push(label.new(eSigT, eTop, "▼ IFVG" + (bearTapOk ? "\n" + lastBearTapTf + " tap" : ""), xloc = xloc.bar_time, style = label.style_label_down, color = color.new(#ef4444, 20), textcolor = color.white, size = lblSize))
-
-float lEntry = eEntry
-float lSl    = eSl - buf
-float lTp    = lEntry + brRR * (lEntry - lSl)
-float sEntry = eEntry
-float sSl    = eSl + buf
-float sTp    = sEntry - brRR * (sSl - sEntry)
-
-if showBr and longSetup and lEntry > lSl
-    brBoxes.push(box.new(bar_index, lTp, bar_index + brLen, lEntry, border_color = color.new(#22c55e, 50), bgcolor = color.new(#22c55e, 85), text = "TP " + str.tostring(lTp, format.mintick), text_size = size.tiny, text_color = #22c55e, text_halign = text.align_right, text_valign = text.align_top))
-    brBoxes.push(box.new(bar_index, lEntry, bar_index + brLen, lSl, border_color = color.new(#ef4444, 50), bgcolor = color.new(#ef4444, 85), text = "SL " + str.tostring(lSl, format.mintick), text_size = size.tiny, text_color = #ef4444, text_halign = text.align_right, text_valign = text.align_bottom))
-    brLines.push(line.new(bar_index, lEntry, bar_index + brLen, lEntry, color = chart.fg_color, width = 2))
-if showBr and shortSetup and sSl > sEntry
-    brBoxes.push(box.new(bar_index, sEntry, bar_index + brLen, sTp, border_color = color.new(#22c55e, 50), bgcolor = color.new(#22c55e, 85), text = "TP " + str.tostring(sTp, format.mintick), text_size = size.tiny, text_color = #22c55e, text_halign = text.align_right, text_valign = text.align_bottom))
-    brBoxes.push(box.new(bar_index, sSl, bar_index + brLen, sEntry, border_color = color.new(#ef4444, 50), bgcolor = color.new(#ef4444, 85), text = "SL " + str.tostring(sSl, format.mintick), text_size = size.tiny, text_color = #ef4444, text_halign = text.align_right, text_valign = text.align_top))
-    brLines.push(line.new(bar_index, sEntry, bar_index + brLen, sEntry, color = chart.fg_color, width = 2))
-
-capBoxes(sigBoxes, 30)
-capLabels(sigLabels, 30)
-capBoxes(brBoxes, brKeep * 2)
-capLines(brLines, brKeep)
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ASIA / LONDON HIGHS & LOWS
+// ASIA / LONDON HIGHS & LOWS • PREVIOUS DAY HIGH / LOW
 // ═══════════════════════════════════════════════════════════════════════════════
 type Lvl
     line  ln
@@ -426,6 +597,7 @@ type Lvl
     bool  isHigh
     color col
     bool  live = true
+    string name = ""
 
 type Sess
     bool  active = false
@@ -436,6 +608,7 @@ type Sess
     box   bx
 
 var array<Lvl> sesLvls  = array.new<Lvl>()
+var array<Lvl> pdLvls   = array.new<Lvl>()
 var array<box> sesBoxes = array.new<box>()
 var Sess asiaS = Sess.new()
 var Sess lonS  = Sess.new()
@@ -443,7 +616,7 @@ var Sess lonS  = Sess.new()
 newLvl(array<Lvl> arr, int x, float p, string txt, color col, bool isHigh) =>
     line  ln = line.new(x, p, bar_index + 3, p, color = col, width = 1)
     label lb = label.new(bar_index + 3, p, txt, style = label.style_label_left, color = color.new(col, 80), textcolor = col, size = size.tiny)
-    arr.push(Lvl.new(ln, lb, p, isHigh, col))
+    arr.push(Lvl.new(ln, lb, p, isHigh, col, true, txt))
 
 updLvls(array<Lvl> arr) =>
     bool sh = false
@@ -503,6 +676,7 @@ sesStep(Sess st, bool enabled, string sess, string name, color col) =>
     true
 
 [sesSweptH, sesSweptL] = updLvls(sesLvls)
+[pdhSwept, pdlSwept]   = updLvls(pdLvls)
 sesStep(asiaS, showAsia and timeframe.isintraday, asiaSess, "ASIA", asiaCol)
 sesStep(lonS,  showLon and timeframe.isintraday,  lonSess,  "LONDON", lonCol)
 while sesLvls.size() > sesDays * 4
@@ -511,10 +685,124 @@ while sesLvls.size() > sesDays * 4
     label.delete(old.lb)
 capBoxes(sesBoxes, sesDays * 2)
 
+// Previous day high / low — tracked on the chart so lines start at the actual high/low candle
+var float dHi = na
+var float dLo = na
+var int   dHiBar = na
+var int   dLoBar = na
+var int   dayCount = 0
+if timeframe.change("D")
+    dayCount += 1
+    if showPd and timeframe.isintraday and dayCount >= 2 and not na(dHi)
+        newLvl(pdLvls, dHiBar, dHi, "PDH", pdCol, true)
+        newLvl(pdLvls, dLoBar, dLo, "PDL", pdCol, false)
+        while pdLvls.size() > pdDays * 2
+            Lvl old = pdLvls.shift()
+            line.delete(old.ln)
+            label.delete(old.lb)
+    dHi    := high
+    dLo    := low
+    dHiBar := bar_index
+    dLoBar := bar_index
+else
+    if na(dHi) or high > dHi
+        dHi    := high
+        dHiBar := bar_index
+    if na(dLo) or low < dLo
+        dLo    := low
+        dLoBar := bar_index
+
+// Next DOL in a direction: nearest untaken swing / PDH-PDL / session level beyond `ref`
+findDol(bool up, float ref) =>
+    float best = na
+    string nm  = ""
+    if up
+        for lq in liqHighs
+            if lq.price > ref and (na(best) or lq.price < best)
+                best := lq.price
+                nm   := lq.external ? "Swing H" : "Internal Swing H"
+        for lv in sesLvls
+            if lv.live and lv.isHigh and lv.price > ref and (na(best) or lv.price < best)
+                best := lv.price
+                nm   := lv.name
+        for lv in pdLvls
+            if lv.live and lv.isHigh and lv.price > ref and (na(best) or lv.price < best)
+                best := lv.price
+                nm   := lv.name
+    else
+        for lq in liqLows
+            if lq.price < ref and (na(best) or lq.price > best)
+                best := lq.price
+                nm   := lq.external ? "Swing L" : "Internal Swing L"
+        for lv in sesLvls
+            if lv.live and not lv.isHigh and lv.price < ref and (na(best) or lv.price > best)
+                best := lv.price
+                nm   := lv.name
+        for lv in pdLvls
+            if lv.live and not lv.isHigh and lv.price < ref and (na(best) or lv.price > best)
+                best := lv.price
+                nm   := lv.name
+    [best, nm]
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// IFVG SIGNALS & BRACKETS
+// ═══════════════════════════════════════════════════════════════════════════════
+var array<box>   sigBoxes  = array.new<box>()
+var array<label> sigLabels = array.new<label>()
+var array<box>   brBoxes   = array.new<box>()
+var array<line>  brLines   = array.new<line>()
+
+bool showLongSig  = longIfvg and (sigFilter == "All" or bullTapOk)
+bool showShortSig = shortIfvg and (sigFilter == "All" or bearTapOk)
+bool longSetup    = showLongSig and (not brNeedTap or bullTapOk) and (not brSmt or bullSmtOk)
+bool shortSetup   = showShortSig and (not brNeedTap or bearTapOk) and (not brSmt or bearSmtOk)
+
+float buf = brBuffer * syminfo.mintick
+string etfLbl = tfLabel(etf)
+
+if showLongSig
+    sigBoxes.push(box.new(eT, eTop, time, eBot, xloc = xloc.bar_time, border_color = color.new(#22c55e, 30), bgcolor = color.new(#22c55e, 80), text = etfLbl + " V-IFVG ▲", text_size = size.tiny, text_color = #22c55e, text_halign = text.align_left, text_valign = text.align_bottom))
+    sigLabels.push(label.new(eSigT, eBot, "▲ IFVG" + (bullTapOk ? "\n" + lastBullTapTf + " tap" : ""), xloc = xloc.bar_time, style = label.style_label_up, color = color.new(#22c55e, 20), textcolor = color.white, size = lblSize))
+if showShortSig
+    sigBoxes.push(box.new(eT, eTop, time, eBot, xloc = xloc.bar_time, border_color = color.new(#ef4444, 30), bgcolor = color.new(#ef4444, 80), text = etfLbl + " V-IFVG ▼", text_size = size.tiny, text_color = #ef4444, text_halign = text.align_left, text_valign = text.align_top))
+    sigLabels.push(label.new(eSigT, eTop, "▼ IFVG" + (bearTapOk ? "\n" + lastBearTapTf + " tap" : ""), xloc = xloc.bar_time, style = label.style_label_down, color = color.new(#ef4444, 20), textcolor = color.white, size = lblSize))
+
+float lEntry = eEntry
+float lSl    = eSl - buf
+float lTp    = lEntry + brRR * (lEntry - lSl)
+string lTpNm = str.tostring(brRR) + "R"
+float sEntry = eEntry
+float sSl    = eSl + buf
+float sTp    = sEntry - brRR * (sSl - sEntry)
+string sTpNm = str.tostring(brRR) + "R"
+if brTpMode == "DOL" and (longSetup or shortSetup)
+    [uDol, uNm] = findDol(true, lEntry + brMinR * (lEntry - lSl))
+    [dDol, dNm] = findDol(false, sEntry - brMinR * (sSl - sEntry))
+    if not na(uDol)
+        lTp   := uDol
+        lTpNm := "DOL: " + uNm
+    if not na(dDol)
+        sTp   := dDol
+        sTpNm := "DOL: " + dNm
+
+if showBr and longSetup and lEntry > lSl
+    brBoxes.push(box.new(bar_index, lTp, bar_index + brLen, lEntry, border_color = color.new(#22c55e, 50), bgcolor = color.new(#22c55e, 85), text = "TP " + lTpNm + "  " + str.tostring(lTp, format.mintick), text_size = size.tiny, text_color = #22c55e, text_halign = text.align_right, text_valign = text.align_top))
+    brBoxes.push(box.new(bar_index, lEntry, bar_index + brLen, lSl, border_color = color.new(#ef4444, 50), bgcolor = color.new(#ef4444, 85), text = "SL " + str.tostring(lSl, format.mintick), text_size = size.tiny, text_color = #ef4444, text_halign = text.align_right, text_valign = text.align_bottom))
+    brLines.push(line.new(bar_index, lEntry, bar_index + brLen, lEntry, color = chart.fg_color, width = 2))
+if showBr and shortSetup and sSl > sEntry
+    brBoxes.push(box.new(bar_index, sEntry, bar_index + brLen, sTp, border_color = color.new(#22c55e, 50), bgcolor = color.new(#22c55e, 85), text = "TP " + sTpNm + "  " + str.tostring(sTp, format.mintick), text_size = size.tiny, text_color = #22c55e, text_halign = text.align_right, text_valign = text.align_bottom))
+    brBoxes.push(box.new(bar_index, sSl, bar_index + brLen, sEntry, border_color = color.new(#ef4444, 50), bgcolor = color.new(#ef4444, 85), text = "SL " + str.tostring(sSl, format.mintick), text_size = size.tiny, text_color = #ef4444, text_halign = text.align_right, text_valign = text.align_top))
+    brLines.push(line.new(bar_index, sEntry, bar_index + brLen, sEntry, color = chart.fg_color, width = 2))
+
+capBoxes(sigBoxes, 30)
+capLabels(sigLabels, 30)
+capBoxes(brBoxes, brKeep * 2)
+capLines(brLines, brKeep)
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // STATUS PANEL
 // ═══════════════════════════════════════════════════════════════════════════════
-var table panel = table.new(position.top_right, 2, 5, bgcolor = color.new(#0b0f14, 15), border_width = 1, border_color = color.new(#334155, 50))
+var table panel = table.new(position.top_right, 2, 7, bgcolor = color.new(#0b0f14, 15), border_width = 1, border_color = color.new(#334155, 50))
 if showTable and barstate.islast
     color txtC = #e5e7eb
     table.cell(panel, 0, 0, "Entry TF", text_color = color.gray, text_size = size.small)
@@ -527,14 +815,20 @@ if showTable and barstate.islast
     table.cell(panel, 1, 3, smtName + (bullSmtOk ? "  ▲ bull" : bearSmtOk ? "  ▼ bear" : ""), text_color = smtCol, text_size = size.small)
     table.cell(panel, 0, 4, "Brackets", text_color = color.gray, text_size = size.small)
     table.cell(panel, 1, 4, brNeedTap ? "after HTF tap only" : "always", text_color = txtC, text_size = size.small)
+    [nUp, nUpNm] = findDol(true, close)
+    [nDn, nDnNm] = findDol(false, close)
+    table.cell(panel, 0, 5, "DOL above", text_color = color.gray, text_size = size.small)
+    table.cell(panel, 1, 5, na(nUp) ? "—" : nUpNm + "  " + str.tostring(nUp, format.mintick), text_color = dolColor, text_size = size.small)
+    table.cell(panel, 0, 6, "DOL below", text_color = color.gray, text_size = size.small)
+    table.cell(panel, 1, 6, na(nDn) ? "—" : nDnNm + "  " + str.tostring(nDn, format.mintick), text_color = dolColor, text_size = size.small)
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // ALERTS
 // ═══════════════════════════════════════════════════════════════════════════════
 if longSetup
-    alert("LONG V-IFVG (" + etfLbl + ") on " + syminfo.ticker + " | Entry " + str.tostring(lEntry, format.mintick) + " SL " + str.tostring(lSl, format.mintick) + " TP " + str.tostring(lTp, format.mintick) + " | HTF tap: " + lastBullTapTf, alert.freq_once_per_bar)
+    alert("LONG V-IFVG (" + etfLbl + ") on " + syminfo.ticker + " | Entry " + str.tostring(lEntry, format.mintick) + " SL " + str.tostring(lSl, format.mintick) + " TP (" + lTpNm + ") " + str.tostring(lTp, format.mintick) + " | HTF tap: " + lastBullTapTf, alert.freq_once_per_bar)
 if shortSetup
-    alert("SHORT V-IFVG (" + etfLbl + ") on " + syminfo.ticker + " | Entry " + str.tostring(sEntry, format.mintick) + " SL " + str.tostring(sSl, format.mintick) + " TP " + str.tostring(sTp, format.mintick) + " | HTF tap: " + lastBearTapTf, alert.freq_once_per_bar)
+    alert("SHORT V-IFVG (" + etfLbl + ") on " + syminfo.ticker + " | Entry " + str.tostring(sEntry, format.mintick) + " SL " + str.tostring(sSl, format.mintick) + " TP (" + sTpNm + ") " + str.tostring(sTp, format.mintick) + " | HTF tap: " + lastBearTapTf, alert.freq_once_per_bar)
 
 alertcondition(longSetup, "Long V-IFVG setup", "Long V-IFVG setup on {{ticker}}")
 alertcondition(shortSetup, "Short V-IFVG setup", "Short V-IFVG setup on {{ticker}}")
@@ -546,3 +840,7 @@ alertcondition(bullSmt, "Bullish SMT", "Bullish SMT on {{ticker}}")
 alertcondition(bearSmt, "Bearish SMT", "Bearish SMT on {{ticker}}")
 alertcondition(sesSweptH, "Asia/London high swept", "Session high swept on {{ticker}}")
 alertcondition(sesSweptL, "Asia/London low swept", "Session low swept on {{ticker}}")
+alertcondition(pdhSwept, "PDH swept", "Previous day high swept on {{ticker}}")
+alertcondition(pdlSwept, "PDL swept", "Previous day low swept on {{ticker}}")
+alertcondition(lrlBullBreak, "LRL broken (bullish)", "Lower-highs LRL broken on {{ticker}}")
+alertcondition(lrlBearBreak, "LRL broken (bearish)", "Higher-lows LRL broken on {{ticker}}")
