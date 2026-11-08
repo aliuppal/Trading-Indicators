@@ -63,3 +63,19 @@ A clean HTF map with a bias panel. Works best on a 1m–3m chart.
 | **Sessions / PDH / PDL** | The Asia and London ranges are shaded, and their highs/lows plus PDH/PDL are extended until swept. |
 | **Bias panel** | Uses 15m, 30m, 1H and 2H FVGs. Each TF shows its latest event: **Bull FVG respected** (tapped, then an HTF candle closes above it) or **Bear FVG disrespected** (an HTF candle closes above it) count as bullish (+1). **Bear FVG respected** or **Bull FVG disrespected** count as bearish (−1). Overall bias = sum of the TFs → BULLISH / BEARISH / NEUTRAL, plus the ★ DOL target. |
 | **Alerts** | Bias turned bullish/bearish, ITH/ITL inside an HTF FVG, session high/low swept, PDH/PDL swept. |
+
+---
+
+# Session Liquidity Levels (`Session-Liquidity-Levels.pine`)
+
+Session-based liquidity map in the style of `AS.H` / `LO.L` / `NYAM.H` / `NYPM.L` markings.
+
+| Feature | Details |
+|---|---|
+| **Session highs / lows** | Asia (`AS`), London (`LO`), NY AM (`NYAM`), NY PM (`NYPM`), each with its own colour and editable hours. The line starts at the candle that made the high/low and **extends until price takes it**, then stops at that candle (or is deleted, your choice). |
+| **Opens** | True Day Open (00:00), 8:30 Open, 9:30, 10am open. Dotted lines with labels that extend for the current trading day; the times are editable. |
+| **PDH / PDL** | Previous day high/low, treated like session levels. |
+| **BSL / SSL** | The nearest untaken level above price is marked **BSL** and the nearest below is marked **SSL**, with the source shown (e.g. `SSL · NYPM.L`). |
+| **Alerts** | Session/PD high taken, session/PD low taken, True Day Open, 9:30 open. |
+
+Default times are New York (change the timezone in settings). Use it on a 1m–15m chart.
